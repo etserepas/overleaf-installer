@@ -1,35 +1,37 @@
 # Overleaf self-hosted installer
 
-Εγκατάσταση του **Overleaf Community Edition** σε δικό σου server με **μία εντολή**, έτοιμο για
-πραγματικές εργασίες: πλήρες TeX Live, ελληνικά, XeLaTeX/LuaLaTeX, γραμματοσειρές Microsoft και
-nginx μπροστά.
+Install **Overleaf Community Edition** on your own server with **one command**. The result is ready
+for real documents: full TeX Live, XeLaTeX/LuaLaTeX with Greek and other non-Latin scripts,
+Microsoft core fonts, and an nginx reverse proxy.
 
-*English summary at the end.*
+```bash
+curl -fsSL https://raw.githubusercontent.com/efthymios-tserepas/overleaf-installer/main/install.sh | sudo bash
+```
 
-## Τι κάνει
+## What it does
 
-| Βήμα | Λεπτομέρειες |
+| Step | Details |
 |---|---|
-| Έλεγχος μηχανήματος | Ubuntu/Debian, x86_64, RAM, ελεύθερος χώρος, IP |
-| Εξαρτήσεις | Docker, Docker Compose v2, git (από τα πακέτα της διανομής) |
-| Overleaf | Το επίσημο [overleaf/toolkit](https://github.com/overleaf/toolkit) με Overleaf, MongoDB, Redis |
-| MongoDB σε νέο kernel | Σε kernel ≥ 6.19 η MongoDB 8 δεν ξεκινά ([SERVER-121912](https://jira.mongodb.org/browse/SERVER-121912)). Προστίθεται αυτόματα η διόρθωση `GLIBC_TUNABLES=glibc.pthread.rseq=1` |
-| Πλήρες TeX Live | `scheme-full` (~8 GB), ξαναχτίσιμο formats, γραμματοσειρές TeX Live ορατές στο XeLaTeX |
-| Γραμματοσειρές Microsoft | Times New Roman, Arial, Courier New κ.λπ. (προαιρετικά, μετά από αποδοχή της άδειας EULA) |
-| Μόνιμο image | Το αποτέλεσμα αποθηκεύεται ως `sharelatex/sharelatex:<έκδοση>-with-texlive-full` ώστε να μη χάνεται σε restart |
-| nginx | Χρησιμοποιεί το υπάρχον nginx (και custom builds), αλλιώς εγκαθιστά της διανομής. Ελέγχει τη ρύθμιση και την επαναφέρει αν αποτύχει |
-| Έλεγχος | Δοκιμαστικό compile με XeLaTeX, ελληνικά, `mathspec`, `fncychap`, `biblatex`, `multirow` |
+| Preflight checks | Ubuntu/Debian, x86_64, RAM, free disk space, the machine's IP address |
+| Dependencies | Docker, Docker Compose v2 and git, from the distribution's packages |
+| Overleaf | The official [overleaf/toolkit](https://github.com/overleaf/toolkit), which runs Overleaf, MongoDB and Redis in Docker |
+| MongoDB on new kernels | MongoDB 8 refuses to start on Linux kernel ≥ 6.19 ([SERVER-121912](https://jira.mongodb.org/browse/SERVER-121912)). On those kernels the script adds the `GLIBC_TUNABLES=glibc.pthread.rseq=1` workaround |
+| Full TeX Live | Installs `scheme-full` (~8 GB), rebuilds the formats, and registers TeX Live's fonts so XeLaTeX/LuaLaTeX can find them |
+| Microsoft core fonts | Times New Roman, Arial, Courier New, etc. These are optional and installed only after you accept their EULA |
+| Persistent image | Saves the result as `sharelatex/sharelatex:<version>-with-texlive-full`, so a restart keeps it |
+| nginx | Reuses an existing nginx, including custom builds without `sites-enabled`/`conf.d`, or installs the distribution's nginx. It validates the new config and rolls back if nginx rejects it |
+| Self-test | Compiles a test document with XeLaTeX, Greek, `mathspec`, `fncychap`, `biblatex` and `multirow` |
 
-Το script μπορεί να ξανατρέξει με ασφάλεια: ό,τι υπάρχει ήδη, το αναγνωρίζει και το προσπερνά.
+The script is **idempotent**. When you re-run it, it detects what is already in place and skips those steps.
 
-## Απαιτήσεις
+## Requirements
 
-- Ubuntu 22.04+ ή Debian 12+, **x86_64** (τα επίσημα images του Overleaf δεν υπάρχουν για ARM / Raspberry Pi)
-- 4 GB RAM ή περισσότερα (προτείνονται 8+)
-- ~25 GB ελεύθερος χώρος (με το πλήρες TeX Live)
-- Πρόσβαση `sudo` και σύνδεση στο internet
+- Ubuntu 22.04+ or Debian 12+, on **x86_64**. Overleaf publishes no official images for ARM or Raspberry Pi
+- At least 4 GB RAM, with 8 GB or more recommended
+- About 25 GB of free disk space with full TeX Live
+- `sudo` access and an internet connection
 
-## Εγκατάσταση
+## Installation
 
 ```bash
 git clone https://github.com/efthymios-tserepas/overleaf-installer.git
@@ -37,109 +39,114 @@ cd overleaf-installer
 sudo ./install.sh
 ```
 
-ή κατευθείαν:
+or directly:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/efthymios-tserepas/overleaf-installer/main/install.sh | sudo bash
 ```
 
-Η εγκατάσταση του TeX Live κρατά συνήθως 30–60 λεπτά. Αν τρέχεις μέσω SSH, καλό είναι να
-χρησιμοποιήσεις `tmux` ή `screen`, ώστε να μη διακοπεί αν κοπεί η σύνδεση.
+Installing TeX Live usually takes 30–60 minutes. Over SSH, run the script inside `tmux` or `screen`
+so a dropped connection doesn't interrupt it.
 
-Μόλις τελειώσει:
+When the script finishes:
 
-1. Άνοιξε `http://<IP του server>/launchpad` και φτιάξε τον πρώτο λογαριασμό διαχειριστή.
-2. Πρόσθεσε άλλους χρήστες από **Admin → Manage Users** (`/admin/register`).
-   Δεν υπάρχει ελεύθερη εγγραφή: τους λογαριασμούς τους φτιάχνει ο διαχειριστής.
-3. Σε κάθε project, διάλεξε compiler από **Menu → Settings → Compiler**
-   (π.χ. XeLaTeX για `fontspec`/`mathspec`/ελληνικές γραμματοσειρές).
+1. Open `http://<server-ip>/launchpad` and create the first admin account.
+2. Add other users under **Admin → Manage Users** (`/admin/register`). There is no public sign-up:
+   only the admin can create accounts.
+3. In each project, pick the compiler under **Menu → Settings → Compiler**. For example, choose
+   XeLaTeX for `fontspec`, `mathspec` or system fonts.
 
-## Επιλογές
+## Options
 
-| Επιλογή | Περιγραφή |
+| Option | Description |
 |---|---|
-| `--site-url URL` | Η διεύθυνση του site (προεπιλογή: `http://<IP του μηχανήματος>`) |
-| `--app-name NAME` | Όνομα στο interface (προεπιλογή: `LaTeX Editor`) |
-| `--admin-email EMAIL` | Email επικοινωνίας στη σελίδα εγγραφής |
-| `--dir PATH` | Φάκελος του toolkit (προεπιλογή: `/opt/overleaf-toolkit`) |
-| `--port PORT` | Εσωτερική θύρα πίσω από το nginx (προεπιλογή: `8080`) |
-| `--no-nginx` | Χωρίς nginx: το Overleaf ακούει απευθείας στη θύρα 80 |
-| `--no-texlive-full` | Κράτα το βασικό TeX Live του image |
-| `--accept-mscorefonts-eula` | Εγκατάσταση γραμματοσειρών Microsoft χωρίς ερώτηση (αποδοχή [EULA](https://corefonts.sourceforge.net/eula.htm)) |
-| `--no-mscorefonts` | Χωρίς γραμματοσειρές Microsoft |
-| `-y`, `--yes` | Χωρίς επιβεβαίωση |
+| `--site-url URL` | Public URL of the site (default: `http://<this machine's IP>`) |
+| `--app-name NAME` | Name shown in the Overleaf UI (default: `LaTeX Editor`) |
+| `--admin-email EMAIL` | Contact email shown on the register page |
+| `--dir PATH` | Where the Overleaf toolkit is installed (default: `/opt/overleaf-toolkit`) |
+| `--port PORT` | Internal port Overleaf listens on behind nginx (default: `8080`) |
+| `--no-nginx` | Don't use nginx; Overleaf listens directly on port 80 |
+| `--no-texlive-full` | Keep the image's minimal TeX Live |
+| `--accept-mscorefonts-eula` | Install the Microsoft core fonts without asking. This accepts their [EULA](https://corefonts.sourceforge.net/eula.htm) |
+| `--no-mscorefonts` | Don't install the Microsoft core fonts |
+| `-y`, `--yes` | Don't ask for confirmation |
 
-Παράδειγμα, εντελώς αυτόματα:
+Fully unattended example:
 
 ```bash
 sudo ./install.sh --yes --accept-mscorefonts-eula --site-url http://192.168.1.50 --app-name "LaTeX Editor"
 ```
 
-Με `curl | sudo bash`, οι επιλογές μπαίνουν μετά το `-s --`:
+With `curl | sudo bash`, pass the options after `-s --`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/efthymios-tserepas/overleaf-installer/main/install.sh | sudo bash -s -- --yes --accept-mscorefonts-eula
 ```
 
-## Διαχείριση
+## nginx
+
+| Situation | What the script does |
+|---|---|
+| No nginx installed | Installs the distribution's `nginx` package and adds a site for Overleaf |
+| nginx with `sites-enabled/` (Debian/Ubuntu layout) | Writes `sites-available/overleaf` and enables it |
+| nginx that includes `conf.d/*.conf` | Writes `conf.d/overleaf.conf` |
+| Custom nginx build (e.g. `/usr/local/nginx`) | Writes `overleaf.conf` next to `nginx.conf`, adds an `include` inside the `http {}` block and keeps a backup of `nginx.conf` |
+| nginx already proxies to Overleaf's port | Leaves the configuration untouched |
+| `--no-nginx` | Skips nginx; Overleaf listens directly on port 80 |
+
+Each change is checked with `nginx -t` before nginx reloads. If the check fails, the script removes
+its changes and stops. The generated site proxies WebSockets, which the real-time editor needs, and
+allows uploads up to 50 MB. Existing sites stay as they are: the Overleaf site answers only for the
+host name in `--site-url`.
+
+## Managing the installation
 
 ```bash
 cd /opt/overleaf-toolkit
-bin/up -d      # εκκίνηση
-bin/stop       # διακοπή
+bin/up -d      # start
+bin/stop       # stop
 bin/logs       # logs
-bin/doctor     # διάγνωση
+bin/doctor     # diagnostics
 ```
 
-Τα δεδομένα (projects, χρήστες) βρίσκονται στο `/opt/overleaf-toolkit/data`. **Κράτα backup.**
+Projects and users are stored in `/opt/overleaf-toolkit/data`. **Back up this directory.**
 
-### Αναβάθμιση του Overleaf
+### Upgrading Overleaf
 
-Μια νέα έκδοση του Overleaf έρχεται ξανά με το βασικό TeX Live. Για αναβάθμιση:
+A new Overleaf release comes with the minimal TeX Live again. To upgrade:
 
 ```bash
 cd /opt/overleaf-toolkit
-bin/upgrade                        # επίσημη αναβάθμιση: νέο toolkit και νέα έκδοση Overleaf
-cd - && sudo ./install.sh --yes    # ξαναστήνει TeX Live και γραμματοσειρές στη νέα έκδοση
+bin/upgrade                        # official upgrade: new toolkit and Overleaf version
+cd - && sudo ./install.sh --yes    # reinstalls TeX Live and fonts on the new version
 ```
 
-Διάβασε πρώτα το [CHANGELOG του toolkit](https://github.com/overleaf/toolkit/blob/master/CHANGELOG.md):
-κάποιες αναβαθμίσεις απαιτούν και νεότερη MongoDB.
+Read the [toolkit CHANGELOG](https://github.com/overleaf/toolkit/blob/master/CHANGELOG.md) first:
+some upgrades also require a newer MongoDB.
 
 ### HTTPS
 
-Για πρόσβαση από το internet, βάλε το site πίσω από HTTPS (π.χ. Let's Encrypt με `certbot --nginx`
-ή Cloudflare) και ξανατρέξε το script με `--site-url https://...`. Με `https://` ενεργοποιούνται
-αυτόματα τα secure cookies. Με `http://` μένουν απενεργοποιημένα, αλλιώς ο browser απορρίπτει το
-cookie της σύνδεσης ("Session error").
+To expose the site to the internet, put it behind HTTPS, for example with Let's Encrypt
+(`certbot --nginx`) or Cloudflare. Then re-run the script with `--site-url https://...`. With an
+`https://` URL the script turns secure cookies on. With `http://` it keeps them off; otherwise the
+browser would drop the session cookie and show "Session error".
 
-## Αντιμετώπιση προβλημάτων
+## Troubleshooting
 
-| Σύμπτωμα | Αιτία / λύση |
+| Symptom | Cause / fix |
 |---|---|
-| `Session error. Please check you have cookies enabled` | Το `OVERLEAF_SECURE_COOKIE` υπάρχει σε site με `http://`. Το Overleaf ενεργοποιεί τα secure cookies όποια τιμή κι αν έχει. Το script το αφαιρεί. |
-| Το container `mongo` κάνει συνέχεια restart | Kernel ≥ 6.19 (`docker logs mongo` γράφει "Linux kernel versions 6.19 and newer"). Το script προσθέτει τη διόρθωση στο `config/docker-compose.override.yml`. |
-| `File 'xxx.sty' not found` | Λείπει το πλήρες TeX Live: ξανατρέξε χωρίς `--no-texlive-full`. |
-| `The font "Times New Roman" cannot be found` | Ξανατρέξε με `--accept-mscorefonts-eula`. |
-| Τα αρχεία ενός project δεν βρίσκονται μετά από upload zip | Το Overleaf αφαιρεί τον εξωτερικό φάκελο του zip. Διόρθωσε τις διαδρομές (π.χ. `Thesis template/figures/` → `figures/`). |
+| `Session error. Please check you have cookies enabled` | `OVERLEAF_SECURE_COOKIE` is set on an `http://` site. Overleaf enables secure cookies whenever the variable exists, whatever its value. The script removes it for `http://` URLs. |
+| The `mongo` container keeps restarting | The kernel is 6.19 or newer: `docker logs mongo` says "Linux kernel versions 6.19 and newer". The script adds the workaround in `config/docker-compose.override.yml`. |
+| `File 'xxx.sty' not found` | Full TeX Live is missing. Re-run the script without `--no-texlive-full`. |
+| `The font "Times New Roman" cannot be found` | Re-run the script with `--accept-mscorefonts-eula`. |
+| Files of an uploaded zip project can't be found | When the zip has a single top-level folder, Overleaf drops it on upload. Fix the paths in the source, e.g. `Thesis template/figures/` → `figures/`. |
+| The site can't be reached from other machines | If `ufw` is active, allow HTTP with `sudo ufw allow 80/tcp`. |
 
-## Άδειες
+## Licenses
 
-- Το script διατίθεται με την άδεια [MIT](LICENSE).
-- Το [Overleaf](https://github.com/overleaf/overleaf) διατίθεται με την άδεια AGPL-3.0, και το
-  "Overleaf" είναι εμπορικό σήμα της Overleaf. Το script δεν περιέχει κώδικα του Overleaf: κατεβάζει
-  τα επίσημα images και το toolkit.
-- Οι γραμματοσειρές Microsoft δεν περιλαμβάνονται εδώ. Το πακέτο `ttf-mscorefonts-installer` τις
-  κατεβάζει μόνο αν αποδεχτείς την [EULA](https://corefonts.sourceforge.net/eula.htm) τους.
-
----
-
-## English summary
-
-`install.sh` sets up Overleaf Community Edition on Ubuntu/Debian x86_64 with one command, using the
-official [overleaf/toolkit](https://github.com/overleaf/toolkit). It installs Docker, full TeX Live
-(with rebuilt formats and TeX Live fonts registered for XeLaTeX), and optionally the Microsoft core
-fonts after you accept their EULA. It commits the result to a local image so a restart keeps it, and
-configures an nginx reverse proxy. It also works around MongoDB 8 failing to start on Linux kernels
-≥ 6.19. It is idempotent, and `./install.sh --help` lists the options. After installing, open
-`/launchpad` to create the first admin account.
+- This installer is released under the [MIT License](LICENSE).
+- [Overleaf](https://github.com/overleaf/overleaf) is licensed under AGPL-3.0, and "Overleaf" is a
+  trademark of Overleaf. This repository contains no Overleaf code: the script downloads the official
+  images and toolkit.
+- The Microsoft core fonts are not included here. The `ttf-mscorefonts-installer` package downloads
+  them only after you accept their [EULA](https://corefonts.sourceforge.net/eula.htm).
