@@ -5,7 +5,7 @@ for real documents: full TeX Live, XeLaTeX/LuaLaTeX with Greek and other non-Lat
 Microsoft core fonts, and an nginx reverse proxy.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/efthymios-tserepas/overleaf-installer/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/etserepas/overleaf-installer/main/install.sh | sudo bash
 ```
 
 ## What it does
@@ -34,7 +34,7 @@ The script is **idempotent**. When you re-run it, it detects what is already in 
 ## Installation
 
 ```bash
-git clone https://github.com/efthymios-tserepas/overleaf-installer.git
+git clone https://github.com/etserepas/overleaf-installer.git
 cd overleaf-installer
 sudo ./install.sh
 ```
@@ -42,7 +42,7 @@ sudo ./install.sh
 or directly:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/efthymios-tserepas/overleaf-installer/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/etserepas/overleaf-installer/main/install.sh | sudo bash
 ```
 
 Installing TeX Live usually takes 30–60 minutes. Over SSH, run the script inside `tmux` or `screen`
@@ -80,7 +80,7 @@ sudo ./install.sh --yes --accept-mscorefonts-eula --site-url http://192.168.1.50
 With `curl | sudo bash`, pass the options after `-s --`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/efthymios-tserepas/overleaf-installer/main/install.sh | sudo bash -s -- --yes --accept-mscorefonts-eula
+curl -fsSL https://raw.githubusercontent.com/etserepas/overleaf-installer/main/install.sh | sudo bash -s -- --yes --accept-mscorefonts-eula
 ```
 
 ## nginx
