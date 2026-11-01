@@ -32,15 +32,15 @@ nginx μπροστά.
 ## Εγκατάσταση
 
 ```bash
-git clone https://github.com/<owner>/<repo>.git
-cd <repo>
+git clone https://github.com/efthymios-tserepas/overleaf-installer.git
+cd overleaf-installer
 sudo ./install.sh
 ```
 
 ή κατευθείαν:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/efthymios-tserepas/overleaf-installer/main/install.sh | sudo bash
 ```
 
 Η εγκατάσταση του TeX Live κρατά συνήθως 30–60 λεπτά. Αν τρέχεις μέσω SSH, καλό είναι να
@@ -78,7 +78,7 @@ sudo ./install.sh --yes --accept-mscorefonts-eula --site-url http://192.168.1.50
 Με `curl | sudo bash`, οι επιλογές μπαίνουν μετά το `-s --`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/main/install.sh | sudo bash -s -- --yes --accept-mscorefonts-eula
+curl -fsSL https://raw.githubusercontent.com/efthymios-tserepas/overleaf-installer/main/install.sh | sudo bash -s -- --yes --accept-mscorefonts-eula
 ```
 
 ## Διαχείριση
