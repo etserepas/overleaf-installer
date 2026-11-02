@@ -19,7 +19,7 @@ curl -fsSL https://raw.githubusercontent.com/etserepas/overleaf-installer/main/i
 | Full TeX Live | Installs `scheme-full` (~8 GB), rebuilds the formats, and registers TeX Live's fonts so XeLaTeX/LuaLaTeX can find them |
 | Microsoft core fonts | Times New Roman, Arial, Courier New, etc. These are optional and installed only after you accept their EULA |
 | Persistent image | Saves the result as `sharelatex/sharelatex:<version>-with-texlive-full`, so a restart keeps it |
-| nginx | Reuses an existing nginx, including custom builds without `sites-enabled`/`conf.d`, or installs the distribution's nginx. It validates the new config and rolls back if nginx rejects it |
+| nginx | Reuses an existing nginx, including custom builds without `sites-enabled`/`conf.d`, or installs the distribution's nginx. Overleaf can use port 80 or a port of its own, with redirects such as `/latex` from the existing site. It validates the new config and rolls back if nginx rejects it |
 | Self-test | Compiles a test document with XeLaTeX, Greek, `mathspec`, `fncychap`, `biblatex` and `multirow` |
 
 The script is **idempotent**. When you re-run it, it detects what is already in place and skips those steps.
@@ -64,8 +64,10 @@ When the script finishes:
 | `--app-name NAME` | Name shown in the Overleaf UI (default: `LaTeX Editor`) |
 | `--admin-email EMAIL` | Contact email shown on the register page |
 | `--dir PATH` | Where the Overleaf toolkit is installed (default: `/opt/overleaf-toolkit`) |
+| `--listen-port PORT` | Public port of Overleaf (default: `80`, or the port in `--site-url`). Use another port, e.g. `8081`, to keep an existing site on port 80 |
+| `--redirect-paths LIST` | Comma-separated paths of the existing port-80 site that redirect to Overleaf, e.g. `/latex,/overleaf`. Needs a `--listen-port` other than 80 |
 | `--port PORT` | Internal port Overleaf listens on behind nginx (default: `8080`) |
-| `--no-nginx` | Don't use nginx; Overleaf listens directly on port 80 |
+| `--no-nginx` | Don't use nginx; Overleaf listens directly on the public port |
 | `--no-texlive-full` | Keep the image's minimal TeX Live |
 | `--accept-mscorefonts-eula` | Install the Microsoft core fonts without asking. This accepts their [EULA](https://corefonts.sourceforge.net/eula.htm) |
 | `--no-mscorefonts` | Don't install the Microsoft core fonts |
@@ -91,13 +93,37 @@ curl -fsSL https://raw.githubusercontent.com/etserepas/overleaf-installer/main/i
 | nginx with `sites-enabled/` (Debian/Ubuntu layout) | Writes `sites-available/overleaf` and enables it |
 | nginx that includes `conf.d/*.conf` | Writes `conf.d/overleaf.conf` |
 | Custom nginx build (e.g. `/usr/local/nginx`) | Writes `overleaf.conf` next to `nginx.conf`, adds an `include` inside the `http {}` block and keeps a backup of `nginx.conf` |
-| nginx already proxies to Overleaf's port | Leaves the configuration untouched |
-| `--no-nginx` | Skips nginx; Overleaf listens directly on port 80 |
+| A proxy to Overleaf's port that you set up by hand | Leaves it untouched |
+| `--no-nginx` | Skips nginx; Overleaf listens directly on the public port |
 
-Each change is checked with `nginx -t` before nginx reloads. If the check fails, the script removes
-its changes and stops. The generated site proxies WebSockets, which the real-time editor needs, and
-allows uploads up to 50 MB. Existing sites stay as they are: the Overleaf site answers only for the
-host name in `--site-url`.
+Each change is checked with `nginx -t` before nginx reloads. If the check fails, the script restores
+the previous files and stops. Files it edits are copied to `overleaf-backups/` next to `nginx.conf`
+first. The generated site proxies WebSockets, which the real-time editor needs, and allows uploads
+up to 50 MB. Existing sites stay as they are: the Overleaf site answers only for the host name in
+`--site-url`. When you re-run the script, it rewrites its own files, e.g. to move Overleaf to a new
+port.
+
+### Keeping an existing site on port 80
+
+Overleaf can't run under a path such as `http://10.10.20.70/latex`: its pages use absolute paths
+(`/login`, `/project`, `/socket.io`, ...), so it needs the root of a host and port. To keep the site
+that already answers on port 80, give Overleaf a port of its own, and optionally make paths of the
+existing site redirect to it:
+
+```bash
+sudo ./install.sh --listen-port 8081 --redirect-paths /latex,/overleaf
+```
+
+| URL | Result |
+|---|---|
+| `http://10.10.20.70/` | Your existing site, unchanged |
+| `http://10.10.20.70:8081/` | Overleaf |
+| `http://10.10.20.70/latex`, `http://10.10.20.70/overleaf` | Redirect to `http://10.10.20.70:8081/` |
+
+The redirects live in `overleaf-redirects.conf` next to `nginx.conf`. The script includes that file
+in the server that answers on port 80, preferring the `default_server`. Re-running the script with
+other paths replaces them. With a domain or local DNS, a subdomain such as `latex.example.com`, set
+with `--site-url`, avoids the port in the address.
 
 ## Managing the installation
 
@@ -140,7 +166,8 @@ browser would drop the session cookie and show "Session error".
 | `File 'xxx.sty' not found` | Full TeX Live is missing. Re-run the script without `--no-texlive-full`. |
 | `The font "Times New Roman" cannot be found` | Re-run the script with `--accept-mscorefonts-eula`. |
 | Files of an uploaded zip project can't be found | When the zip has a single top-level folder, Overleaf drops it on upload. Fix the paths in the source, e.g. `Thesis template/figures/` → `figures/`. |
-| The site can't be reached from other machines | If `ufw` is active, allow HTTP with `sudo ufw allow 80/tcp`. |
+| The site can't be reached from other machines | If `ufw` is active, allow the port, e.g. `sudo ufw allow 80/tcp` (or `8081/tcp` with `--listen-port 8081`). |
+| `/latex` opens the existing site, not Overleaf | The redirects need `--listen-port` other than 80. Check that `overleaf-redirects.conf` is included in the server on port 80: `sudo nginx -T \| grep overleaf-redirects`. |
 
 ## Licenses
 

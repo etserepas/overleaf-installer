@@ -4,7 +4,8 @@
 #   - the official overleaf/toolkit (Docker: Overleaf, MongoDB, Redis)
 #   - full TeX Live (scheme-full), rebuilt formats and TeX Live fonts visible to XeLaTeX/LuaLaTeX
 #   - optional Microsoft core fonts (Times New Roman, Arial, ...) after accepting their EULA
-#   - an nginx reverse proxy (existing nginx is reused, otherwise the distro one is installed)
+#   - an nginx reverse proxy (existing nginx is reused, otherwise the distro one is installed),
+#     on port 80 or on a port of its own with redirects such as /latex from the existing site
 #   - a workaround for MongoDB 8 on Linux kernels >= 6.19 (SERVER-121912)
 #
 # Safe to re-run: every step checks what is already in place and skips it.
@@ -25,6 +26,8 @@ APP_NAME="LaTeX Editor"
 SITE_URL=""                 # default: http://<primary IPv4 of this machine>
 ADMIN_EMAIL=""
 INTERNAL_PORT=8080          # Overleaf listens on 127.0.0.1:<port> behind nginx
+LISTEN_PORT=""              # public port (default: 80, or the port in --site-url)
+REDIRECT_PATHS=""           # e.g. "/latex,/overleaf": paths of the port-80 site that redirect to Overleaf
 NGINX_MODE="auto"           # auto | no
 TEXLIVE_FULL=1
 MSFONTS="ask"               # ask | yes | no
@@ -58,8 +61,12 @@ Options:
   --app-name NAME            Name shown in the Overleaf UI (default: "$APP_NAME")
   --admin-email EMAIL        Contact email shown on the register page
   --dir PATH                 Where to put the Overleaf toolkit (default: $INSTALL_DIR)
+  --listen-port PORT         Public port of Overleaf (default: 80). Use another port, e.g. 8081,
+                             to keep an existing site on port 80
+  --redirect-paths LIST      Comma-separated paths of the existing port-80 site that redirect to
+                             Overleaf, e.g. /latex,/overleaf (needs --listen-port other than 80)
   --port PORT                Internal port Overleaf listens on behind nginx (default: $INTERNAL_PORT)
-  --no-nginx                 Don't use nginx; Overleaf listens directly on port 80
+  --no-nginx                 Don't use nginx; Overleaf listens directly on the public port
   --no-texlive-full          Keep the image's minimal TeX Live
   --accept-mscorefonts-eula  Install Microsoft core fonts (Times New Roman, Arial, ...)
                              and accept their EULA without asking
@@ -75,6 +82,8 @@ while [[ $# -gt 0 ]]; do
     --app-name)                APP_NAME="${2:?}"; shift 2 ;;
     --admin-email)             ADMIN_EMAIL="${2:?}"; shift 2 ;;
     --dir)                     INSTALL_DIR="${2:?}"; shift 2 ;;
+    --listen-port)             LISTEN_PORT="${2:?}"; shift 2 ;;
+    --redirect-paths)          REDIRECT_PATHS="${2:?}"; shift 2 ;;
     --port)                    INTERNAL_PORT="${2:?}"; shift 2 ;;
     --no-nginx)                NGINX_MODE="no"; shift ;;
     --no-texlive-full)         TEXLIVE_FULL=0; shift ;;
@@ -126,15 +135,34 @@ preflight() {
     ok "Free disk: ${free_gb} GB"
   fi
 
+  [[ -z "$LISTEN_PORT" || "$LISTEN_PORT" =~ ^[0-9]+$ ]] || die "--listen-port must be a number"
+  [[ "$INTERNAL_PORT" =~ ^[0-9]+$ ]] || die "--port must be a number"
   if [[ -z "$SITE_URL" ]]; then
     local ip
     ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") print $(i + 1)}')"
     [[ -n "$ip" ]] || ip="$(hostname -I | awk '{print $1}')"
     [[ -n "$ip" ]] || die "cannot detect this machine's IP; pass --site-url"
     SITE_URL="http://$ip"
+    if [[ -n "$LISTEN_PORT" && "$LISTEN_PORT" != 80 ]]; then SITE_URL+=":$LISTEN_PORT"; fi
   fi
   SITE_URL="${SITE_URL%/}"
   [[ "$SITE_URL" =~ ^https?://[^/]+$ ]] || die "--site-url must look like http://host or https://host (no path)"
+  # Without --listen-port, use the port written in --site-url (e.g. http://host:8081).
+  if [[ -z "$LISTEN_PORT" ]]; then
+    if [[ "${SITE_URL#*://}" =~ :([0-9]+)$ ]]; then LISTEN_PORT="${BASH_REMATCH[1]}"; else LISTEN_PORT=80; fi
+  fi
+  if [[ "$NGINX_MODE" != "no" && "$LISTEN_PORT" == "$INTERNAL_PORT" ]]; then
+    die "--listen-port and --port must differ (nginx listens on one, Overleaf on the other)"
+  fi
+
+  if [[ -n "$REDIRECT_PATHS" ]]; then
+    [[ "$NGINX_MODE" == "no" ]] && die "--redirect-paths needs nginx (drop --no-nginx)"
+    [[ "$LISTEN_PORT" == 80 ]] && die "--redirect-paths needs --listen-port other than 80 (Overleaf would own port 80 itself)"
+    local p
+    for p in ${REDIRECT_PATHS//,/ }; do
+      [[ "$p" =~ ^/[A-Za-z0-9._~-]+(/[A-Za-z0-9._~-]+)*$ ]] || die "invalid redirect path: $p (use e.g. /latex)"
+    done
+  fi
 
   if [[ "$MSFONTS" == "ask" ]]; then
     echo
@@ -147,7 +175,8 @@ preflight() {
   echo
   info "Site URL:        $SITE_URL"
   info "Toolkit dir:     $INSTALL_DIR"
-  info "Reverse proxy:   $([[ $NGINX_MODE == no ]] && echo "none (Overleaf on port 80)" || echo "nginx -> 127.0.0.1:$INTERNAL_PORT")"
+  info "Reverse proxy:   $([[ $NGINX_MODE == no ]] && echo "none (Overleaf on port $LISTEN_PORT)" || echo "nginx :$LISTEN_PORT -> 127.0.0.1:$INTERNAL_PORT")"
+  [[ -n "$REDIRECT_PATHS" ]] && info "Redirects:       ${REDIRECT_PATHS//,/, } on port 80 -> $SITE_URL/"
   info "Full TeX Live:   $([[ $TEXLIVE_FULL == 1 ]] && echo yes || echo no)"
   info "MS core fonts:   $MSFONTS"
   if (( ! ASSUME_YES )) && [[ -r /dev/tty ]]; then
@@ -219,7 +248,7 @@ setup_toolkit() {
   local rc="$INSTALL_DIR/config/overleaf.rc" env="$INSTALL_DIR/config/variables.env"
   if [[ "$NGINX_MODE" == "no" ]]; then
     set_conf "$rc" OVERLEAF_LISTEN_IP 0.0.0.0
-    set_conf "$rc" OVERLEAF_PORT 80
+    set_conf "$rc" OVERLEAF_PORT "$LISTEN_PORT"
     unset_conf "$env" OVERLEAF_BEHIND_PROXY
   else
     set_conf "$rc" OVERLEAF_LISTEN_IP 127.0.0.1
@@ -416,6 +445,18 @@ find_nginx() {
 
 nginx_main_conf() { "$1" -t 2>&1 | sed -nE 's/.*configuration file (\S+) (syntax|test).*/\1/p' | head -1; }
 
+# Copies a config file into <confdir>/overleaf-backups/ and prints the copy's path. Backups must
+# not sit next to the original: nginx would load a copy left in sites-enabled/ as another site.
+backup_file() {
+  local dir="$2/overleaf-backups" base copy n=1
+  mkdir -p "$dir"
+  base="$dir/$(basename "$1").$(date +%Y%m%d-%H%M%S)"
+  copy="$base"
+  while [[ -e "$copy" ]]; do n=$(( n + 1 )); copy="$base-$n"; done
+  cp "$1" "$copy"
+  echo "$copy"
+}
+
 reload_nginx() {
   local bin="$1"
   if systemctl is-active --quiet nginx 2>/dev/null; then systemctl reload nginx
@@ -425,7 +466,9 @@ reload_nginx() {
 }
 
 write_proxy_server() {
-  local host="${SITE_URL#*://}"
+  local host="${SITE_URL#*://}" ipv6=""
+  # Listen on IPv6 too, unless the machine has it disabled (nginx would fail to bind).
+  [[ -e /proc/net/if_inet6 ]] && ipv6="listen [::]:${LISTEN_PORT};"
   cat <<EOF
 # Overleaf Community Edition (written by install.sh)
 map \$http_upgrade \$overleaf_connection_upgrade {
@@ -434,8 +477,8 @@ map \$http_upgrade \$overleaf_connection_upgrade {
 }
 
 server {
-    listen 80;
-    listen [::]:80;
+    listen ${LISTEN_PORT};
+    ${ipv6}
     server_name ${host%%:*};
 
     client_max_body_size 50M;
@@ -445,7 +488,7 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection \$overleaf_connection_upgrade;
-        proxy_set_header Host \$host;
+        proxy_set_header Host \$http_host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
@@ -471,42 +514,101 @@ setup_nginx() {
   confdir="$(dirname "$conf")"
   ok "using $bin ($conf)"
 
-  if "$bin" -T 2>/dev/null | grep -qE "proxy_pass\s+http://(127\.0\.0\.1|localhost):${INTERNAL_PORT}\b"; then
-    ok "nginx already proxies to 127.0.0.1:${INTERNAL_PORT}; leaving its configuration as is"
-    return 0
+  local layout=main
+  if [[ -d "$confdir/sites-enabled" ]]; then
+    layout=sites; target="$confdir/sites-available/overleaf"
+  elif "$bin" -T 2>/dev/null | grep -qE '^\s*include\s+\S*conf\.d/\*\.conf'; then
+    layout=confd; target="$confdir/conf.d/overleaf.conf"; mkdir -p "$confdir/conf.d"
+  else
+    target="$confdir/overleaf.conf"
   fi
 
-  if [[ -d "$confdir/sites-enabled" ]]; then
-    target="$confdir/sites-available/overleaf"
-    write_proxy_server >"$target"
-    ln -sf "$target" "$confdir/sites-enabled/overleaf"
-  elif "$bin" -T 2>/dev/null | grep -qE '^\s*include\s+\S*conf\.d/\*\.conf'; then
-    mkdir -p "$confdir/conf.d"
-    target="$confdir/conf.d/overleaf.conf"
-    write_proxy_server >"$target"
+  # A file written by an earlier run is ours to rewrite (e.g. for a new --listen-port);
+  # a proxy someone set up by hand is left alone.
+  if [[ ! -f "$target" ]] &&
+     "$bin" -T 2>/dev/null | grep -qE "proxy_pass\s+http://(127\.0\.0\.1|localhost):${INTERNAL_PORT}\b"; then
+    ok "nginx already proxies to 127.0.0.1:${INTERNAL_PORT}; leaving that configuration as is"
   else
-    # Custom builds without sites-enabled/conf.d: add an include inside the http block.
-    target="$confdir/overleaf.conf"
+    local previous=""
+    [[ -f "$target" ]] && { previous="$(mktemp)"; cp "$target" "$previous"; }
     write_proxy_server >"$target"
-    backup="$conf.bak-overleaf-$(date +%Y%m%d-%H%M%S)"
-    cp "$conf" "$backup"
-    sed -i -E "0,/^\s*http\s*\{/s||&\n    include $target;|" "$conf"
-    include_added=1
+    if [[ "$layout" == sites ]]; then
+      ln -sf "$target" "$confdir/sites-enabled/overleaf"
+    elif [[ "$layout" == main ]] && ! grep -qF "include $target;" "$conf"; then
+      # Custom builds without sites-enabled/conf.d: add an include inside the http block.
+      backup="$(backup_file "$conf" "$confdir")"
+      sed -i -E "0,/^\s*http\s*\{/s||&\n    include $target;|" "$conf"
+      include_added=1
+    fi
+
+    if ! "$bin" -t >/dev/null 2>&1; then
+      "$bin" -t >&2 || true
+      if [[ -n "$previous" ]]; then cp "$previous" "$target"; else rm -f "$target" "$confdir/sites-enabled/overleaf"; fi
+      (( include_added )) && cp "$backup" "$conf"
+      die "nginx rejected the new configuration; changes were rolled back"
+    fi
+    reload_nginx "$bin"
+    ok "nginx: port ${LISTEN_PORT} (${SITE_URL#*://}) -> 127.0.0.1:${INTERNAL_PORT} ($target)"
+    [[ -n "$backup" ]] && info "previous nginx.conf saved as $backup"
+  fi
+
+  [[ -n "$REDIRECT_PATHS" ]] && setup_redirects "$bin" "$confdir"
+
+  if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q '^Status: active'; then
+    warn "ufw is active; to allow browsers in, run: sudo ufw allow ${LISTEN_PORT}/tcp"
+  fi
+  return 0
+}
+
+write_redirects() {
+  local p
+  echo "# Redirects to Overleaf (written by install.sh), included in the site on port 80"
+  for p in ${REDIRECT_PATHS//,/ }; do
+    printf 'location = %s { return 302 %s/; }\n' "$p" "$SITE_URL"
+    printf 'location ^~ %s/ { return 302 %s/; }\n' "$p" "$SITE_URL"
+  done
+}
+
+# Prints "file:line" of the listen directive of the site that answers on port 80:
+# its default_server if there is one, otherwise the first server listening on 80.
+find_port80_listen() {
+  local bin="$1" pattern f n
+  for pattern in '^\s*listen\s+((0\.0\.0\.0|\*):)?80\s[^;]*default_server' '^\s*listen\s+((0\.0\.0\.0|\*):)?80(\s[^;]*)?;'; do
+    while read -r f; do
+      [[ -f "$f" ]] || continue
+      n="$(grep -nE "$pattern" "$f" | head -1 | cut -d: -f1)"
+      [[ -n "$n" ]] && { echo "$f:$n"; return 0; }
+    done < <("$bin" -T 2>/dev/null | sed -nE 's/^# configuration file (.*):$/\1/p')
+  done
+  return 1
+}
+
+setup_redirects() {
+  local bin="$1" confdir="$2" snippet="$2/overleaf-redirects.conf" loc file="" line indent backup="" previous=""
+  [[ -f "$snippet" ]] && { previous="$(mktemp)"; cp "$snippet" "$previous"; }
+  write_redirects >"$snippet"
+
+  if ! "$bin" -T 2>/dev/null | grep -qF "include $snippet;"; then
+    if ! loc="$(find_port80_listen "$bin")"; then
+      rm -f "$snippet"
+      die "no nginx site has 'listen 80', so there is nowhere to add ${REDIRECT_PATHS}"
+    fi
+    file="${loc%:*}"; line="${loc##*:}"
+    backup="$(backup_file "$file" "$confdir")"
+    indent="$(sed -n "${line}s/^\([[:space:]]*\).*/\1/p" "$file")"
+    sed -i "${line}a\\${indent}include $snippet;" "$file"
   fi
 
   if ! "$bin" -t >/dev/null 2>&1; then
     "$bin" -t >&2 || true
-    rm -f "$target" "$confdir/sites-enabled/overleaf"
-    (( include_added )) && cp "$backup" "$conf"
-    die "nginx rejected the new configuration; changes were rolled back"
+    if [[ -n "$previous" ]]; then cp "$previous" "$snippet"; else rm -f "$snippet"; fi
+    [[ -n "$backup" ]] && cp "$backup" "$file"
+    die "nginx rejected the redirects; changes were rolled back"
   fi
   reload_nginx "$bin"
-  ok "nginx: ${SITE_URL#*://} -> 127.0.0.1:${INTERNAL_PORT} ($target)"
-  [[ -n "$backup" ]] && info "previous nginx.conf saved as $backup"
-
-  if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q '^Status: active'; then
-    warn "ufw is active; to allow browsers in, run: sudo ufw allow 80/tcp"
-  fi
+  ok "redirects on port 80: ${REDIRECT_PATHS//,/, } -> $SITE_URL/ ($snippet)"
+  [[ -n "$backup" ]] && info "included from $file (previous version saved as $backup)"
+  return 0
 }
 
 # ------------------------------------------------------------------ finish ---
@@ -517,6 +619,12 @@ summary() {
   echo "    Open:            ${C_BOLD}${SITE_URL}/launchpad${C_RESET}  (create the first admin account)"
   echo "    Then log in at:  ${SITE_URL}/login"
   echo "    Add users at:    ${SITE_URL}/admin/register"
+  if [[ -n "$REDIRECT_PATHS" ]]; then
+    local host="${SITE_URL#*://}" p
+    for p in ${REDIRECT_PATHS//,/ }; do
+      echo "    Also via:        ${SITE_URL%%://*}://${host%%:*}$p"
+    done
+  fi
   echo
   echo "    Toolkit:         cd $INSTALL_DIR"
   echo "                     bin/up -d | bin/stop | bin/logs | bin/doctor"
