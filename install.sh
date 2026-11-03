@@ -353,7 +353,11 @@ install_texlive_full() {
     return 0
   fi
 
-  step "Installing full TeX Live in the Overleaf container (about 8 GB, often 30-60 minutes)"
+  if in_overleaf 'kpsewhich mathspec.sty >/dev/null 2>&1'; then
+    step "Completing full TeX Live (already installed; rebuilding formats and fonts, a few minutes)"
+  else
+    step "Installing full TeX Live in the Overleaf container (about 8 GB, often 30-60 minutes)"
+  fi
 
   # A TeX Live release can only install from its own year's repository. If CTAN has
   # moved on to a newer year, switch to that year's frozen archive.
