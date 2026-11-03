@@ -398,6 +398,18 @@ install_texlive_full() {
 
   verify_texlive
 
+  # The commit writes the container's changes again as a compressed layer and, with the
+  # containerd image store, unpacks it once more, so it needs about twice their size.
+  local changed_gb free_gb docker_root
+  changed_gb=$(( $(docker ps -s --filter name='^sharelatex$' --format '{{.Size}}' |
+    awk '{v = $1 + 0; if ($1 ~ /GB/) v *= 1024; else if ($1 ~ /kB/) v /= 1024; else if ($1 !~ /MB/) v = 0; print int(v)}') / 1024 + 1 ))
+  docker_root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)"
+  free_gb=$(( $(df -Pk "$docker_root" | awk 'NR==2 {print $4}') / 1024 / 1024 ))
+  if (( free_gb < 2 * changed_gb + 2 )); then
+    die "saving the image needs about $(( 2 * changed_gb + 2 )) GB free on $(df -P "$docker_root" | awk 'NR==2 {print $6}'), but only ${free_gb} GB is.
+       Free some space or grow the disk, then re-run this script: what is installed so far is kept."
+  fi
+
   info "saving the container as sharelatex/sharelatex:$target"
   docker commit -m "full TeX Live (install.sh)" sharelatex "sharelatex/sharelatex:$target" >/dev/null
   echo "$target" >"$INSTALL_DIR/config/version"
@@ -529,6 +541,18 @@ setup_nginx() {
      "$bin" -T 2>/dev/null | grep -qE "proxy_pass\s+http://(127\.0\.0\.1|localhost):${INTERNAL_PORT}\b"; then
     ok "nginx already proxies to 127.0.0.1:${INTERNAL_PORT}; leaving that configuration as is"
   else
+    # On port 80 an Overleaf site named after this machine's IP would take over the site
+    # that already answers there. Only the stock nginx welcome page may be replaced.
+    local site80
+    if [[ "$LISTEN_PORT" == 80 && ! -f "$target" ]] && site80="$(find_port80_listen "$bin")"; then
+      site80="${site80%:*}"
+      if ! [[ "$site80" == "$confdir"/sites-enabled/default || "$site80" == "$confdir"/conf.d/default.conf ]] ||
+         grep -qE '^\s*proxy_pass' "$site80"; then
+        die "another site already answers on port 80 ($site80). Keep it with, for example:
+       --listen-port 8081 --redirect-paths /latex,/overleaf"
+      fi
+    fi
+
     local previous=""
     [[ -f "$target" ]] && { previous="$(mktemp)"; cp "$target" "$previous"; }
     write_proxy_server >"$target"
@@ -573,7 +597,7 @@ write_redirects() {
 # its default_server if there is one, otherwise the first server listening on 80.
 find_port80_listen() {
   local bin="$1" pattern f n
-  for pattern in '^\s*listen\s+((0\.0\.0\.0|\*):)?80\s[^;]*default_server' '^\s*listen\s+((0\.0\.0\.0|\*):)?80(\s[^;]*)?;'; do
+  for pattern in '(^|[{;])\s*listen\s+((0\.0\.0\.0|\*):)?80\s[^;]*default_server' '(^|[{;])\s*listen\s+((0\.0\.0\.0|\*):)?80(\s[^;]*)?;'; do
     while read -r f; do
       [[ -f "$f" ]] || continue
       n="$(grep -nE "$pattern" "$f" | head -1 | cut -d: -f1)"
@@ -596,7 +620,9 @@ setup_redirects() {
     file="${loc%:*}"; line="${loc##*:}"
     backup="$(backup_file "$file" "$confdir")"
     indent="$(sed -n "${line}s/^\([[:space:]]*\).*/\1/p" "$file")"
-    sed -i "${line}a\\${indent}include $snippet;" "$file"
+    # Right after the listen directive, so it lands inside the server block even when
+    # the whole block is on one line.
+    sed -i -E "${line}s|(listen\s+[^;]*80[^;]*;)|\1\n${indent}include $snippet;|" "$file"
   fi
 
   if ! "$bin" -t >/dev/null 2>&1; then
