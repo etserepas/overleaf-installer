@@ -245,6 +245,8 @@ setup_toolkit() {
     ok "created config/ from the toolkit defaults"
   fi
 
+  (( TEXLIVE_FULL )) && save_unsaved_texlive
+
   local rc="$INSTALL_DIR/config/overleaf.rc" env="$INSTALL_DIR/config/variables.env"
   if [[ "$NGINX_MODE" == "no" ]]; then
     set_conf "$rc" OVERLEAF_LISTEN_IP 0.0.0.0
@@ -397,7 +399,16 @@ install_texlive_full() {
   fi
 
   verify_texlive
+  commit_texlive_image "$target"
 
+  toolkit bin/up -d >/dev/null 2>&1
+  wait_for_overleaf
+  docker image prune -f >/dev/null 2>&1 || true
+}
+
+# Saves the running sharelatex container as image <target> and points config/version at it.
+commit_texlive_image() {
+  local target="$1"
   # The commit writes the container's changes again as a compressed layer and, with the
   # containerd image store, unpacks it once more, so it needs about twice their size.
   local changed_gb free_gb docker_root
@@ -414,10 +425,19 @@ install_texlive_full() {
   docker commit -m "full TeX Live (install.sh)" sharelatex "sharelatex/sharelatex:$target" >/dev/null
   echo "$target" >"$INSTALL_DIR/config/version"
   ok "config/version -> $target"
+}
 
-  toolkit bin/up -d >/dev/null 2>&1
-  wait_for_overleaf
-  docker image prune -f >/dev/null 2>&1 || true
+# An earlier run may have installed TeX Live and then stopped before saving it (e.g. on a
+# full disk). Changing the configuration recreates the container, which would throw that
+# work away, so save it first.
+save_unsaved_texlive() {
+  local version
+  version="$(cat "$INSTALL_DIR/config/version" 2>/dev/null || true)"
+  [[ -n "$version" && "$version" != *-with-texlive-full ]] || return 0
+  docker ps --format '{{.Names}}' 2>/dev/null | grep -qx sharelatex || return 0
+  in_overleaf 'kpsewhich mathspec.sty >/dev/null 2>&1' || return 0
+  info "saving the full TeX Live installed by an earlier run before changing the configuration"
+  commit_texlive_image "${version}-with-texlive-full"
 }
 
 verify_texlive() {
